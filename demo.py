@@ -99,7 +99,7 @@ def bbox_3D(det, image):
 
 
 
-def draw_boxes(detections, image, img_np):
+def draw_boxes(detections, image, img_np, switch):
     #print("debug: ", colors)
     for det in detections:
         cid    = det.ClassID
@@ -119,7 +119,8 @@ def draw_boxes(detections, image, img_np):
                 cls_name = "Car"
                 cls_color = colors[1]
                 #image[top:bottom, left:right, :] = img_np[top:bottom, left:right, :]
-                image = bbox_3D(det, image)
+                #image = bbox_3D(det, image)
+                cv2.rectangle(image, (left, top), (right, bottom), cls_color, 2)
             elif cid in traffic_sign_list:
                 cls_name = "Traffic Sign"
                 cls_color = colors[2]
@@ -128,6 +129,12 @@ def draw_boxes(detections, image, img_np):
                 cv2.rectangle(image, (left, top), (right, bottom), cls_color, 2)
 
             cv2.putText(image, "[{}]".format(cls_name), (left, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cls_color, 2)
+
+
+            if switch==1:
+                cv2.putText(image, "[{}]".format("2D/Detection"), (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 3)
+            elif switch==2:
+                cv2.putText(image, "[{}]".format("2D/Tracking"), (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 3)
     return image
 
 
@@ -176,7 +183,8 @@ output = jetson.utils.videoOutput(opt.output_URI, argv=sys.argv+is_headless)
 img_w, img_h = 1280, 720
 
 img_res = np.zeros((img_h,img_w,3),dtype=np.uint8)
-out = cv2.VideoWriter('lane_detection.avi', cv2.VideoWriter_fourcc('M','J','P','G'), fps=15, frameSize=(img_w,img_h*2))
+img_res_det = np.zeros((img_h,img_w,3),dtype=np.uint8)
+#out = cv2.VideoWriter('lane_detection.avi', cv2.VideoWriter_fourcc('M','J','P','G'), fps=15, frameSize=(img_w,img_h*2))
 
 # process frames until the user exits
 
@@ -192,14 +200,20 @@ while True:
     # capture the next image
     img = input.Capture()
     img_res.fill(0)
+    img_res_det.fill(0)
     
     img_np = jetson.utils.cudaAllocMapped(width=img.width, height=img.height, format=img.format)
     jetson.utils.cudaResize(img, img_np)
     img_np = jetson.utils.cudaToNumpy(img_np)
     jetson.utils.cudaDeviceSynchronize()
 
+    img_det = jetson.utils.cudaAllocMapped(width=img.width, height=img.height, format=img.format)
+    jetson.utils.cudaResize(img, img_det)
+    jetson.utils.cudaDeviceSynchronize()
 
     black_lines_1, black_lines_2 = lane_det.detect(img_np)
+    detections_det = det_net.Detect(img_det, overlay=opt.overlay)
+    jetson.utils.cudaDeviceSynchronize()
 
 
     if num%10==0:
@@ -232,14 +246,20 @@ while True:
             detections[i].Bottom = bboxes[i][1]+bboxes[i][3]
 
 
+    img_res_det = draw_boxes(detections_det,img_res_det, img_np, 1)
+
+    lanes_det = cv2.addWeighted(img_res_det, 0.8, black_lines_1, 1, 1)
+    lanes_det = cv2.addWeighted(lanes_det, 0.8, black_lines_2, 1, 1)
+
     
-    img_res = draw_boxes(detections,img_res, img_np)
+    img_res = draw_boxes(detections,img_res, img_np, 2)
 
     lanes = cv2.addWeighted(img_res, 0.8, black_lines_1, 1, 1)
     lanes = cv2.addWeighted(lanes, 0.8, black_lines_2, 1, 1)
 
-    both = cv2.hconcat([img_np, lanes])
-    out.write(both)
+    #both = cv2.hconcat([img_np, lanes_det, lanes])
+    both = cv2.hconcat([img_np, lanes_det, lanes])
+    #out.write(both)
 
     # render the image
     both_cuda = jetson.utils.cudaFromNumpy(both)
